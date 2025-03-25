@@ -27,24 +27,35 @@ function getSecret($secretName) {
 }
 
 // Retrieve the RDS secret for database credentials
-$secretName = 'MyRDSSecret'; // Replace with your secret name
+$secretName = 'MyRDSSSecret'; // Replace with your secret name
 $secret = getSecret($secretName);
 
-// Retrieve the CA certificate
-$caSecretName = 'MyRDSCACert'; // Replace with your CA certificate secret name
+// Retrieve the CA certificate information
+$caSecretName = 'MyRDSSCACert'; // Replace with your CA certificate secret name
 $caSecret = getSecret($caSecretName);
-$caCertificate = $caSecret['SecretString']; // Assuming the secret is stored as plain string
 
-if ($secret && $caCertificate) {
+if ($secret && $caSecret) {
     // Database connection details
     $username = $secret['username'];
     $password = $secret['password'];
     $dbHost = $secret['endpoint'];
     $dbName = "ecommerce_1";
 
-    // Path to store CA certificate temporarily
-    $caCertFilePath = '/tmp/ca-cert.pem';
-    file_put_contents($caCertFilePath, $caCertificate);
+    // Get the CA certificate identifier from the secret
+    $caCertIdentifier = $caSecret['CaCertIdentifier'] ?? 'rds-ca-rsa2048-g1';
+    
+    // For MySQL/MariaDB, we need to specify the CA certificate path
+    // AWS RDS CA certificates are typically available at a standard location
+    // or can be downloaded from AWS
+    $caCertFilePath = "/var/www/html/certs/{$caCertIdentifier}.pem";
+    
+    // If the certificate doesn't exist at the standard location, you may need to download it
+    if (!file_exists($caCertFilePath)) {        
+        // If you have the certificate content in the secret, you can write it to a file
+        if (isset($caSecret['CertificateContent'])) {
+            file_put_contents($caCertFilePath, $caSecret['CertificateContent']);
+        }
+    }
 
     // Create connection without SSL
     $con = new mysqli($dbHost, $username, $password, $dbName);
