@@ -1,25 +1,21 @@
 <?php 
-// Include environment variables
-require_once '.env.php';
+// Create an array with SSL options
+$ssl_options = array(
+    "ssl" => array(
+        "verify_peer" => true,
+        "verify_peer_name" => false,
+        "cafile" => __DIR__ . "/../ca.pem"
+    )
+);
 
-// Get database connection details from environment variables
-$db_host = $_ENV['DB_HOST'] ?: 'localhost';
-$db_user = $_ENV['DB_USER'] ?: 'root';
-$db_password = $_ENV['DB_PASSWORD'] ?: '';
-$db_name = $_ENV['DB_NAME'] ?: 'ecommerce_1';
-$db_ssl = $_ENV['DB_SSL'] ?: false;
-
-// Create connection with SSL if enabled
-$con = new mysqli($db_host, $db_user, $db_password, $db_name);
+// Create connection with SSL
+$con = mysqli_init();
+mysqli_options($con, MYSQLI_OPT_SSL_VERIFY_SERVER_CERT, true);
+mysqli_ssl_set($con, NULL, NULL, __DIR__ . "/../ca.pem", NULL, NULL);
+mysqli_real_connect($con, 'localhost', 'root', '', 'ecommerce_1', 3306, NULL, MYSQLI_CLIENT_SSL);
 
 // Check connection
-if ($con->connect_error) {
-    die("Connection failed: " . $con->connect_error);
-}
-
-// Enable SSL if configured
-if ($db_ssl) {
-    $con->ssl_set(NULL, NULL, "/var/www/html/backend/ca.pem", NULL, NULL);
-    $con->real_connect($db_host, $db_user, $db_password, $db_name, 3306, MYSQLI_CLIENT_SSL);
+if (mysqli_connect_errno()) {
+    die("Failed to connect to MySQL: " . mysqli_connect_error());
 }
 ?>
