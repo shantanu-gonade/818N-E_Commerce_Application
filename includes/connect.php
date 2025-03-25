@@ -1,6 +1,6 @@
 <?php
 // Include the AWS SDK for PHP
-require _DIR_ . '/../vendor/autoload.php';
+require __DIR__ . '/../vendor/autoload.php';
 use Aws\SecretsManager\SecretsManagerClient;
 use Aws\Exception\AwsException;
 
@@ -39,43 +39,48 @@ if ($secret && $caSecret) {
     $username = $secret['username'];
     $password = $secret['password'];
     $dbHost = $secret['endpoint'];
-    $dbName = "ecommerce_1";
+    $dbName = "ecommercedb";
 
     // Get the CA certificate identifier from the secret
     $caCertIdentifier = $caSecret['CaCertIdentifier'] ?? 'rds-ca-rsa2048-g1';
     
-    // For MySQL/MariaDB, we need to specify the CA certificate path
-    // AWS RDS CA certificates are typically available at a standard location
-    // or can be downloaded from AWS
-    $caCertFilePath = "/var/www/html/certs/{$caCertIdentifier}.pem";
+    // Create a directory for certificates if it doesn't exist
+    $certDir = __DIR__ . '/../certs';
+    if (!is_dir($certDir)) {
+        mkdir($certDir, 0755, true);
+    }
     
-    // If the certificate doesn't exist at the standard location, you may need to download it
-    if (!file_exists($caCertFilePath)) {        
-        // If you have the certificate content in the secret, you can write it to a file
+    $caCertFilePath = "{$certDir}/{$caCertIdentifier}.pem";
+    
+    // If the certificate doesn't exist, try to get it from the secret
+    if (!file_exists($caCertFilePath)) {
         if (isset($caSecret['CertificateContent'])) {
             file_put_contents($caCertFilePath, $caSecret['CertificateContent']);
+        } else {
+            // Download the certificate from AWS if not in the secret
+            // This is a fallback mechanism
+            $awsCertUrl = "https://truststore.pki.rds.amazonaws.com/{$caCertIdentifier}.pem";
+            $certContent = @file_get_contents($awsCertUrl);
+            if ($certContent !== false) {
+                file_put_contents($caCertFilePath, $certContent);
+            } else {
+                die("Failed to download CA certificate from AWS.");
+            }
         }
     }
 
-    // Create connection without SSL
-    $con = new mysqli($dbHost, $username, $password, $dbName);
+    // Create connection with SSL options
+    $con = mysqli_init();
 
-    // Check connection
-    if ($con->connect_error) {
-        die("Connection failed: " . $con->connect_error);
+    // Set SSL options
+    if ($con->ssl_set(null, null, $caCertFilePath, null, null)) {
+        $con->options(MYSQLI_OPT_SSL_VERIFY_SERVER_CERT, true);
+        if (!$con->real_connect($dbHost, $username, $password, $dbName, 3306, null, MYSQLI_CLIENT_SSL)) {
+            die("Connection failed: " . $con->connect_error);
+        }
+    } else {
+        $con = new mysqli($dbHost, $username, $password, $dbName);
     }
-
-    // Set SSL options for the connection
-    $con->ssl_set(null, null, $caCertFilePath, null, null);
-
-    // Verify server certificate
-    $con->options(MYSQLI_OPT_SSL_VERIFY_SERVER_CERT, true);
-
-    // Reconnect with SSL
-    if (!$con->real_connect($dbHost, $username, $password, $dbName, 3306, null, MYSQLI_CLIENT_SSL)) {
-        die("SSL Connection failed: " . $con->connect_error);
-    }
-
     echo "Connected successfully to the database with SSL.";
 } else {
     echo "Failed to retrieve database credentials or CA certificate.";
