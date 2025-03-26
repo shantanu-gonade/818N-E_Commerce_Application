@@ -34,12 +34,15 @@ $secret = getSecret($secretName);
 $caSecretName = 'MyRDSSCACert'; // Replace with your CA certificate secret name
 $caSecret = getSecret($caSecretName);
 
+// Create connection with SSL options
+$con = mysqli_init();
+
 if ($secret && $caSecret) {
     // Database connection details
     $username = $secret['username'];
     $password = $secret['password'];
     $dbHost = $secret['endpoint'];
-    $dbName = "ecommercedb";
+    $dbName = $secret['dbname'];
 
     // Get the CA certificate identifier from the secret
     $caCertIdentifier = $caSecret['CaCertIdentifier'] ?? 'rds-ca-rsa2048-g1';
@@ -53,30 +56,25 @@ if ($secret && $caSecret) {
     $caCertFilePath = "{$certDir}/{$caCertIdentifier}.pem";
     
     // If the certificate doesn't exist, try to get it from the secret
-    if (!file_exists($caCertFilePath)) {
-        if (isset($caSecret['CertificateContent'])) {
-            file_put_contents($caCertFilePath, $caSecret['CertificateContent']);
+    if (isset($caSecret['CertificateContent'])) {
+        file_put_contents($caCertFilePath, $caSecret['CertificateContent']);
+    } else {
+        // Download the certificate from AWS if not in the secret
+        // This is a fallback mechanism
+        $awsCertUrl = "https://truststore.pki.rds.amazonaws.com/{$caCertIdentifier}.pem";
+        $certContent = @file_get_contents($awsCertUrl);
+        if ($certContent !== false) {
+            file_put_contents($caCertFilePath, $certContent);
         } else {
-            // Download the certificate from AWS if not in the secret
-            // This is a fallback mechanism
-            $awsCertUrl = "https://truststore.pki.rds.amazonaws.com/{$caCertIdentifier}.pem";
-            $certContent = @file_get_contents($awsCertUrl);
-            if ($certContent !== false) {
-                file_put_contents($caCertFilePath, $certContent);
-            } else {
-                die("Failed to download CA certificate from AWS.");
-            }
+            $con = new mysqli($dbHost, $username, $password, $dbName);
         }
     }
-
-    // Create connection with SSL options
-    $con = mysqli_init();
 
     // Set SSL options
     if ($con->ssl_set(null, null, $caCertFilePath, null, null)) {
         $con->options(MYSQLI_OPT_SSL_VERIFY_SERVER_CERT, true);
         if (!$con->real_connect($dbHost, $username, $password, $dbName, 3306, null, MYSQLI_CLIENT_SSL)) {
-            die("Connection failed: " . $con->connect_error);
+            $con = new mysqli($dbHost, $username, $password, $dbName);
         }
     } else {
         $con = new mysqli($dbHost, $username, $password, $dbName);
