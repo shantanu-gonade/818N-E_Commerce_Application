@@ -49,28 +49,29 @@ if ($secret && $caSecret) {
     
     // Create a directory for certificates if it doesn't exist
     $certDir = __DIR__ . '/../certs';
-    if (!is_dir($certDir)) {
-        mkdir($certDir, 0755, true);
-    }
-    
-    $caCertFilePath = "{$certDir}/{$caCertIdentifier}.pem";
-    
-    // If the certificate doesn't exist, try to get it from the secret
-    if (isset($caSecret['CertificateContent'])) {
-        file_put_contents($caCertFilePath, $caSecret['CertificateContent']);
-    } else {
-        // Download the certificate from AWS if not in the secret
-        // This is a fallback mechanism
-        $awsCertUrl = "https://truststore.pki.rds.amazonaws.com/{$caCertIdentifier}.pem";
-        $certContent = @file_get_contents($awsCertUrl);
-        if ($certContent !== false) {
-            file_put_contents($caCertFilePath, $certContent);
-        } else {
-            $con = new mysqli($dbHost, $username, $password, $dbName);
-        }
-    }
+//     if (!is_dir($certDir)) {
+//         mkdir($certDir, 0755, true);
+//     }
+//
+//     $caCertFilePath = "{$certDir}/{$caCertIdentifier}.pem";
+//
+//     // If the certificate doesn't exist, try to get it from the secret
+//     if (isset($caSecret['CertificateContent'])) {
+//         file_put_contents($caCertFilePath, $caSecret['CertificateContent']);
+//     } else {
+//         // Download the certificate from AWS if not in the secret
+//         // This is a fallback mechanism
+//         $awsCertUrl = "https://truststore.pki.rds.amazonaws.com/{$caCertIdentifier}.pem";
+//         $certContent = @file_get_contents($awsCertUrl);
+//         if ($certContent !== false) {
+//             file_put_contents($caCertFilePath, $certContent);
+//         } else {
+//             $con = new mysqli($dbHost, $username, $password, $dbName);
+//         }
+//     }
 
     // Set SSL options
+    $caCertFilePath = "{$certDir}/{$caCertIdentifier}.pem";
     if ($con->ssl_set(null, null, $caCertFilePath, null, null)) {
         $con->options(MYSQLI_OPT_SSL_VERIFY_SERVER_CERT, true);
         if (!$con->real_connect($dbHost, $username, $password, $dbName, 3306, null, MYSQLI_CLIENT_SSL)) {
