@@ -35,53 +35,95 @@ $caSecretName = 'MyRDSSCACert'; // Replace with your CA certificate secret name
 $caSecret = getSecret($caSecretName);
 
 // Create connection with SSL options
-$con = mysqli_init();
+// $con = mysqli_init();
 
-if ($secret && $caSecret) {
-    // Database connection details
-    $username = $secret['username'];
-    $password = $secret['password'];
-    $dbHost = $secret['endpoint'];
-    $dbName = $secret['dbname'];
+// if ($secret && $caSecret) {
+//     // Database connection details
+//     $username = $secret['username'];
+//     $password = $secret['password'];
+//     $dbHost = $secret['endpoint'];
+//     $dbName = $secret['dbname'];
 
-    // Get the CA certificate identifier from the secret
-    $caCertIdentifier = $caSecret['CaCertIdentifier'] ?? 'rds-ca-rsa2048-g1';
+//     // Get the CA certificate identifier from the secret
+//     $caCertIdentifier = $caSecret['CaCertIdentifier'] ?? 'rds-ca-rsa2048-g1';
     
-    // Create a directory for certificates if it doesn't exist
-    $certDir = __DIR__ . '/../certs';
-//     if (!is_dir($certDir)) {
-//         mkdir($certDir, 0755, true);
-//     }
-//
+//     // Set path to the CA certificate
+//     $certDir = __DIR__ . '/../certs';
 //     $caCertFilePath = "{$certDir}/{$caCertIdentifier}.pem";
-//
-//     // If the certificate doesn't exist, try to get it from the secret
-//     if (isset($caSecret['CertificateContent'])) {
-//         file_put_contents($caCertFilePath, $caSecret['CertificateContent']);
-//     } else {
-//         // Download the certificate from AWS if not in the secret
-//         // This is a fallback mechanism
-//         $awsCertUrl = "https://truststore.pki.rds.amazonaws.com/{$caCertIdentifier}.pem";
-//         $certContent = @file_get_contents($awsCertUrl);
-//         if ($certContent !== false) {
-//             file_put_contents($caCertFilePath, $certContent);
-//         } else {
-//             $con = new mysqli($dbHost, $username, $password, $dbName);
-//         }
+    
+//     // Configure SSL connection
+//     if (!file_exists($caCertFilePath)) {
+//         die("Error: SSL CA certificate file not found at {$caCertFilePath}. SSL connection is required.");
 //     }
+    
+//     // Set SSL options with proper certificate verification
+//     if (!$con->ssl_set($con, null, $caCertFilePath, null, null)) {
+//         die("Error: Failed to set SSL parameters: " . $con->error);
+//     }
+    
+//     // Enable strict SSL certificate verification
+//     $con->options(MYSQLI_OPT_SSL_VERIFY_SERVER_CERT, true);
+    
+//     // Force SSL connection with no fallback to non-SSL
+//     if (!$con->real_connect($dbHost, $username, $password, $dbName, 3306, null, MYSQLI_CLIENT_SSL)) {
+//         die("Error: Failed to establish secure SSL connection to database: " . $con->error);
+//     }
+    
+//     echo "Connected successfully to the database with SSL.";
+// } else {
+//     echo "Failed to retrieve database credentials or CA certificate.";
+// }
 
-    // Set SSL options
-    $caCertFilePath = "{$certDir}/{$caCertIdentifier}.pem";
-    if ($con->ssl_set(null, null, $caCertFilePath, null, null)) {
-        $con->options(MYSQLI_OPT_SSL_VERIFY_SERVER_CERT, true);
-        if (!$con->real_connect($dbHost, $username, $password, $dbName, 3306, null, MYSQLI_CLIENT_SSL)) {
-            $con = new mysqli($dbHost, $username, $password, $dbName);
+// Initialize connection variable
+$pdo = null;
+
+// Check if secrets were retrieved successfully
+if ($secret && $caSecret) {
+    try {
+        // Extract database connection details
+        $username = $secret['username'];
+        $password = $secret['password'];
+        $dbHost = $secret['endpoint'];
+        $dbName = $secret['dbname'];
+
+        // Get the CA certificate identifier from the secret
+        $caCertIdentifier = isset($caSecret['CaCertIdentifier']) ? $caSecret['CaCertIdentifier'] : 'rds-ca-rsa2048-g1';
+        
+        // Set path to the CA certificate
+        $certDir = __DIR__ . '/../certs';
+        $caCertFilePath = $certDir . '/global-bundle.pem';
+        
+        // Check if CA certificate file exists
+        if (!file_exists($caCertFilePath)) {
+            throw new Exception("Error: SSL CA certificate file not found at $caCertFilePath. SSL connection is required.");
         }
-    } else {
-        $con = new mysqli($dbHost, $username, $password, $dbName);
+        
+        // Define DSN
+        $dsn = "mysql:host=$dbHost;dbname=$dbName";
+        
+        // Define PDO options
+        $options = array(
+            PDO::MYSQL_ATTR_SSL_CA => $caCertFilePath,
+            PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT => true,
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION
+        );
+        
+        // Create PDO connection
+        $pdo = new PDO($dsn, $username, $password, $options);
+        
+        // Verify SSL connection
+        $result = $pdo->query("SHOW STATUS LIKE 'Ssl_cipher'")->fetch(PDO::FETCH_ASSOC);
+        echo "SSL connection: " . ($result['Value'] ? "YES - " . $result['Value'] : "NO") . "\n";
+        
+    } catch (PDOException $e) {
+        echo "Connection failed: " . $e->getMessage();
+    } catch (Exception $e) {
+        echo $e->getMessage();
     }
-    echo "Connected successfully to the database with SSL.";
 } else {
     echo "Failed to retrieve database credentials or CA certificate.";
 }
+
+// Return the PDO connection
+return $pdo;
 ?>
