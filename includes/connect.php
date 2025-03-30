@@ -83,7 +83,7 @@ if ($secret && $caSecret) {
         // Extract database connection details
         $username = $secret['username'];
         $password = $secret['password'];
-        $dbHost = $secret['endpoint'];
+        $dbHost = isset($secret['proxy_endpoint']) ? $secret['proxy_endpoint'] : $secret['endpoint'];
         $dbName = $secret['dbname'];
 
         // Get the CA certificate identifier from the secret
