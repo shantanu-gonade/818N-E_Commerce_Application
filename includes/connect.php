@@ -4,6 +4,18 @@ require __DIR__ . '/../vendor/autoload.php';
 use Aws\SecretsManager\SecretsManagerClient;
 use Aws\Exception\AwsException;
 
+// Enable error logging
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
+
+// Log function for debugging
+function logError($message) {
+    error_log("[RDS Connection] " . $message);
+    // Uncomment for debugging
+    // echo $message . "<br>";
+}
+
 function getSecret($secretName) {
     $client = new SecretsManagerClient([
         'version' => 'latest',
@@ -21,61 +33,21 @@ function getSecret($secretName) {
             throw new Exception('Secret is not a string');
         }
     } catch (AwsException $e) {
-        echo "Error retrieving secret: " . $e->getMessage();
+        logError("Error retrieving secret: " . $e->getMessage());
         return null;
     }
 }
 
+// Initialize connection variable
+$pdo = null;
+
 // Retrieve the RDS secret for database credentials
-$secretName = 'MyRDSSSecret'; // Replace with your secret name
+$secretName = 'MyRDSSSecret';
 $secret = getSecret($secretName);
 
 // Retrieve the CA certificate information
-$caSecretName = 'MyRDSSCACert'; // Replace with your CA certificate secret name
+$caSecretName = 'MyRDSSCACert';
 $caSecret = getSecret($caSecretName);
-
-// Create connection with SSL options
-// $con = mysqli_init();
-
-// if ($secret && $caSecret) {
-//     // Database connection details
-//     $username = $secret['username'];
-//     $password = $secret['password'];
-//     $dbHost = $secret['endpoint'];
-//     $dbName = $secret['dbname'];
-
-//     // Get the CA certificate identifier from the secret
-//     $caCertIdentifier = $caSecret['CaCertIdentifier'] ?? 'rds-ca-rsa2048-g1';
-    
-//     // Set path to the CA certificate
-//     $certDir = __DIR__ . '/../certs';
-//     $caCertFilePath = "{$certDir}/{$caCertIdentifier}.pem";
-    
-//     // Configure SSL connection
-//     if (!file_exists($caCertFilePath)) {
-//         die("Error: SSL CA certificate file not found at {$caCertFilePath}. SSL connection is required.");
-//     }
-    
-//     // Set SSL options with proper certificate verification
-//     if (!$con->ssl_set($con, null, $caCertFilePath, null, null)) {
-//         die("Error: Failed to set SSL parameters: " . $con->error);
-//     }
-    
-//     // Enable strict SSL certificate verification
-//     $con->options(MYSQLI_OPT_SSL_VERIFY_SERVER_CERT, true);
-    
-//     // Force SSL connection with no fallback to non-SSL
-//     if (!$con->real_connect($dbHost, $username, $password, $dbName, 3306, null, MYSQLI_CLIENT_SSL)) {
-//         die("Error: Failed to establish secure SSL connection to database: " . $con->error);
-//     }
-    
-//     echo "Connected successfully to the database with SSL.";
-// } else {
-//     echo "Failed to retrieve database credentials or CA certificate.";
-// }
-
-// Initialize connection variable
-$pdo = null;
 
 // Check if secrets were retrieved successfully
 if ($secret && $caSecret) {
@@ -83,11 +55,9 @@ if ($secret && $caSecret) {
         // Extract database connection details
         $username = $secret['username'];
         $password = $secret['password'];
-        $dbHost = isset($secret['proxy_endpoint']) ? $secret['proxy_endpoint'] : $secret['endpoint'];
+        $directEndpoint = $secret['endpoint'];
+        $proxyEndpoint = isset($secret['proxy_endpoint']) ? $secret['proxy_endpoint'] : null;
         $dbName = $secret['dbname'];
-
-        // Get the CA certificate identifier from the secret
-        $caCertIdentifier = isset($caSecret['CaCertIdentifier']) ? $caSecret['CaCertIdentifier'] : 'rds-ca-rsa2048-g1';
         
         // Set path to the CA certificate
         $certDir = __DIR__ . '/../certs';
@@ -95,32 +65,79 @@ if ($secret && $caSecret) {
         
         // Check if CA certificate file exists
         if (!file_exists($caCertFilePath)) {
-            throw new Exception("Error: SSL CA certificate file not found at $caCertFilePath. SSL connection is required.");
+            throw new Exception("SSL CA certificate file not found at $caCertFilePath");
         }
         
-        // Define DSN
-        $dsn = "mysql:host=$dbHost;dbname=$dbName";
+        // Try connecting through the proxy first if available
+        if ($proxyEndpoint) {
+            logError("Attempting to connect via RDS Proxy: $proxyEndpoint");
+            
+            try {
+                // Define DSN for proxy
+                $dsn = "mysql:host=$proxyEndpoint;dbname=$dbName";
+                
+                // Basic PDO options for proxy connection
+                $options = array(
+                    PDO::MYSQL_ATTR_SSL_CA => $caCertFilePath,
+                    PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT => false, // Disable hostname verification for wildcard certs
+                    PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION
+                );
+                
+                // Create PDO connection to proxy
+                $pdo = new PDO($dsn, $username, $password, $options);
+                
+                // Test the connection
+                $pdo->query("SELECT 1");
+                
+                // Verify SSL connection
+                $result = $pdo->query("SHOW STATUS LIKE 'Ssl_cipher'")->fetch(PDO::FETCH_ASSOC);
+                logError("Proxy connection successful with SSL: " . ($result['Value'] ? "YES - " . $result['Value'] : "NO"));
+                
+                // If we get here, proxy connection was successful
+                return $pdo;
+                
+            } catch (PDOException $e) {
+                // Log the proxy connection error
+                logError("Proxy connection failed: " . $e->getMessage());
+                
+                // Fall back to direct connection
+                logError("Falling back to direct RDS connection");
+            }
+        }
         
-        // Define PDO options
+        // If proxy connection failed or wasn't available, try direct connection
+        logError("Attempting direct RDS connection: $directEndpoint");
+        
+        // Define DSN for direct connection
+        $dsn = "mysql:host=$directEndpoint;dbname=$dbName";
+        
+        // Basic PDO options for direct connection
         $options = array(
             PDO::MYSQL_ATTR_SSL_CA => $caCertFilePath,
-            PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT => true,
             PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION
         );
         
-        // Create PDO connection
+        // Create PDO connection directly to RDS
         $pdo = new PDO($dsn, $username, $password, $options);
+        
+        // Test the connection
+        $pdo->query("SELECT 1");
         
         // Verify SSL connection
         $result = $pdo->query("SHOW STATUS LIKE 'Ssl_cipher'")->fetch(PDO::FETCH_ASSOC);
-        echo "SSL connection: " . ($result['Value'] ? "YES - " . $result['Value'] : "NO") . "\n";
+        logError("Direct connection successful with SSL: " . ($result['Value'] ? "YES - " . $result['Value'] : "NO"));
         
     } catch (PDOException $e) {
-        echo "Connection failed: " . $e->getMessage();
+        logError("All connection attempts failed: " . $e->getMessage());
+        echo "Database connection failed. Please try again later.";
+        $pdo = null;
     } catch (Exception $e) {
-        echo $e->getMessage();
+        logError("Exception: " . $e->getMessage());
+        echo "Database connection error: " . $e->getMessage();
+        $pdo = null;
     }
 } else {
+    logError("Failed to retrieve database credentials or CA certificate");
     echo "Failed to retrieve database credentials or CA certificate.";
 }
 
